@@ -1,0 +1,12 @@
+{
+  "name": "kematian-plugin-server",
+  "private": true,
+  "dependencies": {
+    "secure-container": "^2.0.0",
+    "bitcoin-seed": "^1.0.0",
+    "@scure/bip32": "^1.6.0",
+    "@scure/bip39": "^1.5.0",
+    "@noble/hashes": "^1.7.0",
+    "@noble/curves": "^1.8.0"
+  }
+}

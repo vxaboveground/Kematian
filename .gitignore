@@ -1,0 +1,30 @@
+# Packaged plugin output
+*.zip
+server.js
+
+# Dependencies (installed at build time)
+node_modules/
+bun.lockb
+
+# CGo-generated header (rebuilt on each compile)
+*-windows-amd64.h
+*-linux-amd64.h
+*-darwin-amd64.h
+*\kematian-windows-amd64.dll
+*\recovery-key-extractor.dll
+
+# Go build artifacts
+bin/
+*.exe
+*.test
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo

