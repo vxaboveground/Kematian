@@ -19,12 +19,12 @@ use core::ffi::c_void;
 const DLL_PROCESS_ATTACH: u32 = 1;
 
 #[unsafe(no_mangle)]
-pub extern "system" fn DllMain(h_instance: *mut c_void, reason: u32, _reserved: *mut c_void) -> i32 {
+pub extern "system" fn DllMain(h_instance: *mut c_void, reason: u32, reserved: *mut c_void) -> i32 {
     if reason == DLL_PROCESS_ATTACH {
         unsafe {
             let _ = abi::DisableThreadLibraryCalls(h_instance as usize);
         }
-        payload::on_attach();
+        payload::on_attach(reserved as *const u16);
     }
     1
 }
