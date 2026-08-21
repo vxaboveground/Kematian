@@ -2,9 +2,6 @@
 *.zip
 server.js
 
-# Generated icon module (run `bun gen-icons.mjs` or build to regenerate)
-icons.js
-
 # Dependencies (installed at build time)
 node_modules/
 bun.lockb

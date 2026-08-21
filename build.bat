@@ -106,10 +106,10 @@ pushd "%PLUGIN_DIR%"
 if not exist "node_modules" (
   bun install --frozen-lockfile 2>nul || bun install
 )
-echo [build] generating icons.js (simple-icons + lucide)
+echo [build] generating icons (simple-icons + lucide)
 bun gen-icons.mjs
 if errorlevel 1 (
-  echo [error] icons.js generation failed
+  echo [error] icon generation failed
   popd
   exit /b 1
 )
@@ -142,7 +142,6 @@ for %%T in (%BUILD_TARGETS%) do (
 if exist "%PLUGIN_DIR%%PLUGIN_NAME%.html" set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%%PLUGIN_NAME%.html'"
 if exist "%PLUGIN_DIR%%PLUGIN_NAME%.css"  set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%%PLUGIN_NAME%.css'"
 if exist "%PLUGIN_DIR%%PLUGIN_NAME%.js"   set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%%PLUGIN_NAME%.js'"
-if exist "%PLUGIN_DIR%icons.js"          set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%icons.js'"
 if exist "%PLUGIN_DIR%config.json"        set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%config.json'"
 if exist "%PLUGIN_DIR%server.js"          set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%server.js'"
 

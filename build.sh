@@ -136,8 +136,8 @@ echo "[build] bundling server.js"
 if [ ! -d "node_modules" ]; then
   bun install --frozen-lockfile 2>/dev/null || bun install
 fi
-echo "[build] generating icons.js (simple-icons + lucide)"
-bun gen-icons.mjs || { echo "[error] icons.js generation failed"; exit 1; }
+echo "[build] generating icons (simple-icons + lucide)"
+bun gen-icons.mjs || { echo "[error] icon generation failed"; exit 1; }
 bun build ./server.src.js --outfile ./server.js --target node --external bun:sqlite
 echo "[ok] server.js (bundled)"
 
@@ -158,7 +158,6 @@ done
 [ -f "$PLUGIN_NAME.html" ] && ZIP_SOURCES+=("$PLUGIN_NAME.html")
 [ -f "$PLUGIN_NAME.css" ]  && ZIP_SOURCES+=("$PLUGIN_NAME.css")
 [ -f "$PLUGIN_NAME.js" ]   && ZIP_SOURCES+=("$PLUGIN_NAME.js")
-[ -f "icons.js" ]          && ZIP_SOURCES+=("icons.js")
 [ -f "config.json" ]       && ZIP_SOURCES+=("config.json")
 [ -f "server.js" ]         && ZIP_SOURCES+=("server.js")
 
