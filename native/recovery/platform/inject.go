@@ -362,8 +362,8 @@ func CreatePipeSession(dllBytes []byte, browserName string) (*PipeSession, error
 				logf("inject PID %d failed: %v", pid, err)
 				continue
 			}
-			s.watchExit(fmt.Sprintf("existing %s", browserName), 5000)
-			if err := waitPipeConnect(hPipe, 5000); err != nil {
+			s.watchExit(fmt.Sprintf("existing %s", browserName), 2000)
+			if err := waitPipeConnect(hPipe, 2000); err != nil {
 				logf("pipe connect timeout for PID %d", pid)
 				s.Close()
 				procDisconnectNamedPipe.Call(uintptr(hPipe))
@@ -389,9 +389,9 @@ func CreatePipeSession(dllBytes []byte, browserName string) (*PipeSession, error
 		windows.CloseHandle(hPipe)
 		return nil, fmt.Errorf("create and inject browser: %w", err)
 	}
-	s.watchExit(fmt.Sprintf("spawned %s", browserName), 15000)
+	s.watchExit(fmt.Sprintf("spawned %s", browserName), 8000)
 
-	if err := waitPipeConnect(hPipe, 15000); err != nil {
+	if err := waitPipeConnect(hPipe, 5000); err != nil {
 		logf("pipe connect timeout for new process")
 		s.Close()
 		windows.CloseHandle(hPipe)
@@ -584,8 +584,8 @@ func TryV20KeyViaBrowserSession(processName, browserName string, encBlob []byte)
 			logf("V20 inject %s PID %d: %v", browserName, pid, injErr)
 			continue
 		}
-		s.watchExit(fmt.Sprintf("V20 %s", browserName), 3000)
-		if connErr := waitPipeConnect(hPipe, 3000); connErr != nil {
+		s.watchExit(fmt.Sprintf("V20 %s", browserName), 2000)
+		if connErr := waitPipeConnect(hPipe, 1000); connErr != nil {
 			logf("V20 pipe timeout for %s PID %d", browserName, pid)
 			procDisconnectNamedPipe.Call(uintptr(hPipe))
 			windows.CloseHandle(hPipe)
@@ -617,8 +617,8 @@ func TryV20KeyViaBrowserSession(processName, browserName string, encBlob []byte)
 		windows.CloseHandle(hPipe)
 		return nil, fmt.Errorf("create headless %s for V20: %w", browserName, err)
 	}
-	s.watchExit(fmt.Sprintf("V20 spawned %s", browserName), 15000)
-	if connErr := waitPipeConnect(hPipe, 15000); connErr != nil {
+	s.watchExit(fmt.Sprintf("V20 spawned %s", browserName), 8000)
+	if connErr := waitPipeConnect(hPipe, 5000); connErr != nil {
 		s.Close()
 		windows.CloseHandle(hPipe)
 		return nil, fmt.Errorf("pipe connect timeout for new headless %s", browserName)
