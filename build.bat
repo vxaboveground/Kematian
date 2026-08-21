@@ -19,13 +19,28 @@ if not exist "%INJECTION_DIR%\ReflectiveLoader.c" (
   exit /b 1
 )
 
-REM ── Build recovery-key-extractor.dll (C++ injected DLL) ──────────────────
+REM ── Build recovery-key-extractor.dll (Rust injected DLL) ─────────────────
 REM Output must live next to platform/embedded_dll.go (go:embed resolution).
 set "EXTRACTOR_OUT=%NATIVE_DIR%\recovery\platform\recovery-key-extractor.dll"
+set "RUST_DIR=%PLUGIN_DIR%rust-extractor"
+set "RUST_DLL=%RUST_DIR%\target\x86_64-pc-windows-gnu\release\recovery_key_extractor.dll"
 
-echo [build] recovery-key-extractor.dll
-g++ -shared -O2 -s -w -m64 -DWIN_X64 -DREFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN -o "%EXTRACTOR_OUT%" "%PLUGIN_DIR%key_extractor.cpp" -xc "%PLUGIN_DIR%bootstrap.c" -I"%INJECTION_DIR%" -xc "%INJECTION_DIR%\ReflectiveLoader.c" -lcrypt32 -lole32 -loleaut32
-if %errorlevel% == 1 (
+echo [build] recovery-key-extractor.dll (Rust)
+if not exist "%RUST_DIR%\Cargo.toml" (
+  echo [error] rust-extractor\Cargo.toml not found
+  exit /b 1
+)
+pushd "%RUST_DIR%"
+cargo build --release --target x86_64-pc-windows-gnu
+if errorlevel 1 (
+  popd
+  echo [error] cargo build failed
+  exit /b 1
+)
+popd
+copy /y "%RUST_DLL%" "%EXTRACTOR_OUT%" >nul
+if errorlevel 1 (
+  echo [error] failed to copy Rust DLL to %EXTRACTOR_OUT%
   exit /b 1
 )
 echo [ok] %EXTRACTOR_OUT%

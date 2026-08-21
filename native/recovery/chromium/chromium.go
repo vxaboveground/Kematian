@@ -66,18 +66,22 @@ func ExtractCookies(profile types.ProfileInfo, cfg types.BrowserConfig, keys *ty
 
 	d, err := db.OpenDatabase(dbPath, pids)
 	if err != nil {
+		logf("cookie DB open failed for %s (%s): %v", cfg.Name, dbPath, err)
 		return nil
 	}
 	defer d.Close()
 
 	rows, err := d.Query("SELECT host_key, name, path, is_secure, is_httponly, expires_utc, encrypted_value, value FROM cookies")
 	if err != nil {
+		logf("cookie query failed for %s: %v", cfg.Name, err)
 		return nil
 	}
 	defer rows.Close()
 
 	var results []types.CookieResult
+	count := 0
 	for rows.Next() {
+		count++
 		var host, name, path, plainValue sql.NullString
 		var secure, httpOnly sql.NullBool
 		var expiresUTC sql.NullInt64
@@ -100,6 +104,7 @@ func ExtractCookies(profile types.ProfileInfo, cfg types.BrowserConfig, keys *ty
 			Profile:    profile.Name,
 		})
 	}
+	logf("cookie row count for %s: %d", cfg.Name, count)
 	return results
 }
 

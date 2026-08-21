@@ -1,0 +1,6 @@
+# Statically link the CRT so the injected DLL has no VCRUNTIME/UCRT DLL
+# dependency at runtime. Only the GNU target is supported: the reflective
+# loader manually maps the image, and the MSVC CRT's TLS/CFG/stack-cookie
+# machinery fast-fails under a manual map.
+[target.x86_64-pc-windows-gnu]
+rustflags = ["-C", "target-feature=+crt-static"]

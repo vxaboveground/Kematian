@@ -22,17 +22,19 @@ const (
 
 type systemHandleInfoEx struct {
 	NumberOfHandles uintptr
+	Reserved        uintptr
 	Handles         [1]systemHandleEntry
 }
 
 type systemHandleEntry struct {
-	UniqueProcessId       uintptr
-	CreatorBackTraceIndex uint16
-	ObjectTypeIndex       int16
-	HandleAttributes      int32
-	HandleValue           uintptr
-	Object                uintptr
-	GrantedAccess         uint32
+	Object           uintptr
+	UniqueProcessId  uintptr
+	HandleValue      uintptr
+	GrantedAccess    uint32
+	CreatorBackTrace uint16
+	ObjectTypeIndex  uint16
+	HandleAttributes uint32
+	Reserved         uint32
 }
 
 type rmUniqueProcess2 struct {

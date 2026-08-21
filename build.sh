@@ -24,34 +24,33 @@ if [ -z "${BUILD_TARGETS:-}" ]; then
   BUILD_TARGETS="$HOST_OS-$HOST_ARCH"
 fi
 
-# ── Build recovery-key-extractor.dll (Windows targets only) ────────────────
+# ── Build recovery-key-extractor.dll (Rust injected DLL, Windows only) ────
 build_extractor_dll() {
-  local INJECTION_DIR="$PLUGIN_DIR/vendor/injection"
+  local RUST_DIR="$PLUGIN_DIR/rust-extractor"
   # Output must live next to platform/embedded_dll.go (go:embed resolution).
   local EXTRACTOR_OUT="$NATIVE_DIR/recovery/platform/recovery-key-extractor.dll"
+  local RUST_DLL="$RUST_DIR/target/x86_64-pc-windows-gnu/release/recovery_key_extractor.dll"
 
-  if [ ! -f "$INJECTION_DIR/ReflectiveLoader.c" ]; then
-    echo "[warn] vendor/injection missing — skipping DLL build"
+  if [ ! -f "$RUST_DIR/Cargo.toml" ]; then
+    echo "[warn] rust-extractor/Cargo.toml missing — skipping DLL build"
     return
   fi
 
-  echo "[build] recovery-key-extractor.dll"
+  echo "[build] recovery-key-extractor.dll (Rust)"
 
-  # Use x86_64-w64-mingw32-g++ for cross-compilation, or native g++ on Windows/MSYS
-  local CXX="${MINGW_CXX:-x86_64-w64-mingw32-g++}"
-  if command -v "$CXX" &>/dev/null; then
-    $CXX -shared -O2 -s -w -m64 \
-      -DWIN_X64 -DREFLECTIVEDLLINJECTION_CUSTOM_DLLMAIN \
-      -o "$EXTRACTOR_OUT" \
-      "$PLUGIN_DIR/key_extractor.cpp" \
-      -xc "$PLUGIN_DIR/bootstrap.c" \
-      -I"$INJECTION_DIR" \
-      -xc "$INJECTION_DIR/ReflectiveLoader.c" \
-      -lcrypt32 -lole32 -loleaut32
-    echo "[ok] $EXTRACTOR_OUT"
-  else
-    echo "[warn] $CXX not found — skipping recovery-key-extractor.dll build"
+  # Cross-compiling from a non-Windows host needs a MinGW linker; native
+  # Windows GNU builds pick up the system gcc automatically.
+  if command -v x86_64-w64-mingw32-gcc &>/dev/null; then
+    export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
   fi
+
+  (cd "$RUST_DIR" && cargo build --release --target x86_64-pc-windows-gnu)
+  if [ ! -f "$RUST_DLL" ]; then
+    echo "[error] cargo build produced no DLL at $RUST_DLL"
+    return 1
+  fi
+  cp -f "$RUST_DLL" "$EXTRACTOR_OUT"
+  echo "[ok] $EXTRACTOR_OUT"
 }
 
 # Check if any target is Windows

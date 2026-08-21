@@ -20,6 +20,7 @@ type PipeSession struct {
 	hProcess    windows.Handle
 	pid         uint32
 	ownsProcess bool
+	job         windows.Handle
 	closed      bool
 }
 
@@ -209,10 +210,40 @@ func (s *PipeSession) Close() {
 	windows.CloseHandle(s.hPipe)
 
 	if s.ownsProcess && s.hProcess != 0 {
+		if s.job != 0 {
+			windows.CloseHandle(s.job)
+			s.job = 0
+		}
 		windows.TerminateProcess(s.hProcess, 0)
 		windows.WaitForSingleObject(s.hProcess, 3000)
 		windows.CloseHandle(s.hProcess)
+	} else if s.hProcess != 0 {
+		windows.CloseHandle(s.hProcess)
 	}
+}
+
+func (s *PipeSession) watchExit(label string, timeoutMs uint32) {
+	h := s.hProcess
+	if h == 0 {
+		return
+	}
+	go func() {
+		ret, _, _ := procWaitForSingleObject.Call(uintptr(h), uintptr(timeoutMs))
+		if ret != uintptr(windows.WAIT_OBJECT_0) {
+			return
+		}
+		s.mu.Lock()
+		wasClosed := s.closed
+		s.mu.Unlock()
+		if wasClosed {
+			return
+		}
+		var code uint32
+		if err := windows.GetExitCodeProcess(h, &code); err != nil {
+			return
+		}
+		logf("process %d (%s) died before pipe connect (exit code 0x%08x)", s.pid, label, code)
+	}()
 }
 
 func (s *PipeSession) sendExitLocked() {
