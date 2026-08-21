@@ -38,10 +38,13 @@ if errorlevel 1 (
   exit /b 1
 )
 popd
-copy /y "%RUST_DLL%" "%EXTRACTOR_OUT%" >nul
+fc /b "%RUST_DLL%" "%EXTRACTOR_OUT%" >nul 2>&1
 if errorlevel 1 (
-  echo [error] failed to copy Rust DLL to %EXTRACTOR_OUT%
-  exit /b 1
+  copy /y "%RUST_DLL%" "%EXTRACTOR_OUT%" >nul
+  if errorlevel 1 (
+    echo [error] failed to copy Rust DLL to %EXTRACTOR_OUT%
+    exit /b 1
+  )
 )
 echo [ok] %EXTRACTOR_OUT%
 
@@ -64,19 +67,30 @@ for %%T in (%BUILD_TARGETS%) do (
   )
 
   set "OUTFILE=%PLUGIN_DIR%%PLUGIN_NAME%-!TARGET_OS!-!TARGET_ARCH!.!EXT!"
-  if exist "!OUTFILE!" del /f /q "!OUTFILE!"
-  if exist "!OUTFILE:.dll=.h!" del /f /q "!OUTFILE:.dll=.h!"
-  if exist "!OUTFILE:.dylib=.h!" del /f /q "!OUTFILE:.dylib=.h!"
-  if exist "!OUTFILE:.so=.h!" del /f /q "!OUTFILE:.so=.h!"
-  echo [build] GOOS=!TARGET_OS! GOARCH=!TARGET_ARCH! ^> !OUTFILE!
-  set "GOOS=!TARGET_OS!"
-  set "GOARCH=!TARGET_ARCH!"
-  set "CGO_ENABLED=1"
-  go build -buildmode=c-shared -o "!OUTFILE!" .
-  if errorlevel 1 (
-    echo [error] build failed for !TARGET_OS!-!TARGET_ARCH!
-    popd
-    exit /b 1
+
+  set "NEED_BUILD=1"
+  if exist "!OUTFILE!" (
+    powershell -NoProfile -Command "$o=(Get-Item '!OUTFILE!').LastWriteTime; $d='!NATIVE_DIR!'; foreach($f in (Get-ChildItem -Path $d -Recurse -File -Filter *.go)){ if($f.LastWriteTime -gt $o){ exit 1 } }; foreach($p in @('go.mod','go.sum','recovery\platform\recovery-key-extractor.dll')){ $x=Join-Path $d $p; if(Test-Path $x){ if((Get-Item $x).LastWriteTime -gt $o){ exit 1 } } }; exit 0"
+    if not errorlevel 1 set "NEED_BUILD=0"
+  )
+
+  if "!NEED_BUILD!"=="0" (
+    echo [skip] !OUTFILE! up to date
+  ) else (
+    if exist "!OUTFILE!" del /f /q "!OUTFILE!"
+    if exist "!OUTFILE:.dll=.h!" del /f /q "!OUTFILE:.dll=.h!"
+    if exist "!OUTFILE:.dylib=.h!" del /f /q "!OUTFILE:.dylib=.h!"
+    if exist "!OUTFILE:.so=.h!" del /f /q "!OUTFILE:.so=.h!"
+    echo [build] GOOS=!TARGET_OS! GOARCH=!TARGET_ARCH! ^> !OUTFILE!
+    set "GOOS=!TARGET_OS!"
+    set "GOARCH=!TARGET_ARCH!"
+    set "CGO_ENABLED=1"
+    go build -buildmode=c-shared -o "!OUTFILE!" .
+    if errorlevel 1 (
+      echo [error] build failed for !TARGET_OS!-!TARGET_ARCH!
+      popd
+      exit /b 1
+    )
   )
 )
 
@@ -91,6 +105,13 @@ echo [build] bundling server.js dependencies
 pushd "%PLUGIN_DIR%"
 if not exist "node_modules" (
   bun install --frozen-lockfile 2>nul || bun install
+)
+echo [build] generating icons.js (simple-icons + lucide)
+bun gen-icons.mjs
+if errorlevel 1 (
+  echo [error] icons.js generation failed
+  popd
+  exit /b 1
 )
 bun build ./server.src.js --outfile ./server.js --target node --external bun:sqlite
 if errorlevel 1 (
@@ -121,6 +142,7 @@ for %%T in (%BUILD_TARGETS%) do (
 if exist "%PLUGIN_DIR%%PLUGIN_NAME%.html" set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%%PLUGIN_NAME%.html'"
 if exist "%PLUGIN_DIR%%PLUGIN_NAME%.css"  set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%%PLUGIN_NAME%.css'"
 if exist "%PLUGIN_DIR%%PLUGIN_NAME%.js"   set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%%PLUGIN_NAME%.js'"
+if exist "%PLUGIN_DIR%icons.js"          set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%icons.js'"
 if exist "%PLUGIN_DIR%config.json"        set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%config.json'"
 if exist "%PLUGIN_DIR%server.js"          set "ZIP_SOURCES=!ZIP_SOURCES!,'%PLUGIN_DIR%server.js'"
 

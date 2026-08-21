@@ -1,3 +1,5 @@
+import { ICONS, TAB_ICONS } from "./icons.js";
+
 (() => {
   const PLUGIN_ID = "kematian";
   const PAGE_SIZE = 1000;
@@ -274,7 +276,21 @@
   const BROWSERS = [
     "Chrome", "Edge", "Brave", "Vivaldi", "Yandex",
     "Arc", "Opera", "Opera GX", "Firefox", "Waterfox",
+    "LibreWolf",
   ];
+
+  function typeIcon(name) {
+    const b = ICONS[name];
+    if (!b) return "";
+    return `<svg viewBox="0 0 24 24" role="img" aria-label="${esc(name)}"><path d="${b.path}"/></svg>`;
+  }
+
+  function tabIcon(t) {
+    if (TAB_ICONS[t.id]) return TAB_ICONS[t.id];
+    const b = ICONS[t.label];
+    if (b) return `<svg viewBox="0 0 24 24" role="img" aria-hidden="true" fill="currentColor" style="color:${b.color}"><path d="${b.path}"/></svg>`;
+    return "";
+  }
 
   const DATA_KEYS = [
     "passwords", "cookies", "autofill", "history", "bookmarks",
@@ -783,8 +799,13 @@
       return `<span class="badge badge-client" title="${esc(String(v))}">${esc(shortId(String(v)))}</span>`;
     if (col.bool)
       return v ? `<span class="bool-yes">✓</span>` : `<span class="bool-no">—</span>`;
-    if (col.badge)
-      return `<span class="badge badge-${esc(String(v || "").replace(/\s+/g, "-"))}">${esc(String(v || ""))}</span>`;
+    if (col.badge) {
+      const val = String(v || "");
+      const slug = val.replace(/\s+/g, "-");
+      if (ICONS[val])
+        return `<span class="badge badge-${esc(slug)} badge-icon" title="${esc(val)}">${typeIcon(val)}</span>`;
+      return `<span class="badge badge-${esc(slug)}">${esc(val)}</span>`;
+    }
     if (col.chromets)
       return esc(chromeTs(v));
     if (col.unixtimestamp)
@@ -884,12 +905,15 @@
   }
 
   // ── Tabs ──────────────────────────────────────────────────────
+  const GLOBAL_STATS_KEYS = { _gamingRows: "gamingItems", _vpnRows: "vpnItems" };
+
   function getGlobalTabTotal(tabKey) {
+    const sk = GLOBAL_STATS_KEYS[tabKey] || tabKey;
     if (activeClient !== "all") {
       const c = knownClients.find(x => x.clientId === activeClient);
-      return c ? (c[tabKey] || 0) : 0;
+      return c ? (c[sk] || 0) : 0;
     }
-    return knownClients.reduce((sum, c) => sum + (c[tabKey] || 0), 0);
+    return knownClients.reduce((sum, c) => sum + (c[sk] || 0), 0);
   }
 
   function buildTabs() {
@@ -917,7 +941,8 @@
       const count = isGlobal
         ? getGlobalTabTotal(t.key).toLocaleString()
         : (lastResults ? (lastResults[t.key] || []).length : 0);
-      btn.innerHTML = `${esc(t.label)} <span class="tab-count">${count}</span>`;
+      const tIcon = tabIcon(t);
+      btn.innerHTML = `${tIcon}${esc(t.label)} <span class="tab-count">${count}</span>`;
       btn.addEventListener("click", () => {
         activeTab = t.id;
         sortCol = null; sortAsc = true;
@@ -935,6 +960,22 @@
   }
 
   // ── Browser filter ────────────────────────────────────────────
+  // Returns the browsers that actually appear in the current tab's data, so
+  // the filter only shows what the operator has harvested.
+  function currentBrowsers() {
+    const tab = TABS.find(t => t.id === activeTab);
+    const rows = isGlobal
+      ? (tabData[tab?.key]?.rows || [])
+      : (lastResults?.[tab?.key] || []);
+    const set = new Set();
+    for (const r of rows) if (r.browser) set.add(r.browser);
+    const present = BROWSERS.filter(b => set.has(b));
+    // Icons first (in BROWSERS order), then text-only browsers last.
+    const withIcon = present.filter(b => ICONS[b]);
+    const withoutIcon = present.filter(b => !ICONS[b]);
+    return [...withIcon, ...withoutIcon];
+  }
+
   function buildBfilts() {
     const tab = TABS.find(t => t.id === activeTab);
     if (!tab?.cols.some(c => c.k === "browser")) { bfiltsEl.style.display = "none"; return; }
@@ -962,12 +1003,19 @@
       bfiltsEl.appendChild(sep);
     }
 
-    const pills = [{ label: "All", value: "all" }, ...BROWSERS.map(b => ({ label: b, value: b }))];
+    const pills = [{ label: "All", value: "all" }, ...currentBrowsers().map(b => ({ label: b, value: b }))];
     for (const p of pills) {
       const btn = document.createElement("button");
       btn.className = "bfilt" + (activeBrowser === p.value ? " active" : "");
       btn.dataset.browser = p.value;
-      btn.textContent = p.label;
+      const icon = ICONS[p.value];
+      if (icon) {
+        btn.title = p.label;
+        btn.className += " bfilt-icon";
+        btn.innerHTML = `<svg viewBox="0 0 24 24" role="img" aria-label="${esc(p.label)}" style="color:${icon.color}"><path d="${icon.path}"/></svg>`;
+      } else {
+        btn.textContent = p.label;
+      }
       btn.addEventListener("click", () => {
         activeBrowser = p.value;
         buildBfilts();
@@ -2000,6 +2048,7 @@
       const result = await rpc(tab.rpc, p);
       tabData[tab.key] = { rows: result.rows, total: result.total, offset };
       buildTabs();
+      buildBfilts();
       renderTable();
     } catch (e) { log(`Load error (${tab.label}): ${e.message}`); }
   }
@@ -2440,6 +2489,12 @@
         if (activeTab !== "keys") { activeTab = "keys"; sortCol = null; sortAsc = true; }
         buildTabs(); buildBfilts(); renderTable();
         log(`Key scan — ${lastResults.keys.length} keys found`);
+      },
+      seed_scan_results(payload) {
+        if (!lastResults) { lastResults = {}; dataCard.style.display = ""; }
+        lastResults.seeds = payload?.seeds || [];
+        buildTabs(); buildBfilts(); renderTable();
+        log(`Seed scan — ${lastResults.seeds.length} seed phrases found`);
       },
       app_scan_results(payload) {
         if (!lastResults) { lastResults = {}; dataCard.style.display = ""; }

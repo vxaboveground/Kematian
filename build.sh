@@ -49,7 +49,9 @@ build_extractor_dll() {
     echo "[error] cargo build produced no DLL at $RUST_DLL"
     return 1
   fi
-  cp -f "$RUST_DLL" "$EXTRACTOR_OUT"
+  if [ ! -f "$EXTRACTOR_OUT" ] || ! cmp -s "$RUST_DLL" "$EXTRACTOR_OUT"; then
+    cp -f "$RUST_DLL" "$EXTRACTOR_OUT"
+  fi
   echo "[ok] $EXTRACTOR_OUT"
 }
 
@@ -79,6 +81,21 @@ for target in $BUILD_TARGETS; do
   esac
 
   OUTFILE="$PLUGIN_DIR/$PLUGIN_NAME-$TARGET_OS-$TARGET_ARCH.$EXT"
+
+  NEED_BUILD=1
+  if [ -f "$OUTFILE" ]; then
+    if ! find "$NATIVE_DIR" -type f \
+        \( -name '*.go' -o -name 'go.mod' -o -name 'go.sum' -o -name 'recovery-key-extractor.dll' \) \
+        -newer "$OUTFILE" -print -quit | grep -q .; then
+      NEED_BUILD=0
+    fi
+  fi
+
+  if [ "$NEED_BUILD" = 0 ]; then
+    echo "[skip] $OUTFILE up to date"
+    continue
+  fi
+
   rm -f "$OUTFILE" "${OUTFILE%.*}.h"
 
   echo "[build] GOOS=$TARGET_OS GOARCH=$TARGET_ARCH > $OUTFILE"
@@ -119,6 +136,8 @@ echo "[build] bundling server.js"
 if [ ! -d "node_modules" ]; then
   bun install --frozen-lockfile 2>/dev/null || bun install
 fi
+echo "[build] generating icons.js (simple-icons + lucide)"
+bun gen-icons.mjs || { echo "[error] icons.js generation failed"; exit 1; }
 bun build ./server.src.js --outfile ./server.js --target node --external bun:sqlite
 echo "[ok] server.js (bundled)"
 
@@ -139,6 +158,7 @@ done
 [ -f "$PLUGIN_NAME.html" ] && ZIP_SOURCES+=("$PLUGIN_NAME.html")
 [ -f "$PLUGIN_NAME.css" ]  && ZIP_SOURCES+=("$PLUGIN_NAME.css")
 [ -f "$PLUGIN_NAME.js" ]   && ZIP_SOURCES+=("$PLUGIN_NAME.js")
+[ -f "icons.js" ]          && ZIP_SOURCES+=("icons.js")
 [ -f "config.json" ]       && ZIP_SOURCES+=("config.json")
 [ -f "server.js" ]         && ZIP_SOURCES+=("server.js")
 
