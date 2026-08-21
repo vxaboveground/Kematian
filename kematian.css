@@ -997,3 +997,36 @@ mark {
   .dp-detail-row { flex-wrap: wrap; }
   .dp-guild-list { max-width: 100%; }
 }
+
+/* ── Fingerprint modal ─────────────────────────────────────────── */
+.fp-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  background: rgba(0,0,0,0.62);
+  display: flex; align-items: center; justify-content: center;
+  padding: 24px;
+}
+.fp-modal {
+  background: #0d1220;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  width: min(760px, 100%);
+  max-height: 90vh;
+  display: flex; flex-direction: column;
+  box-shadow: 0 24px 64px rgba(0,0,0,0.5);
+}
+.fp-head {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 18px; border-bottom: 1px solid var(--border);
+}
+.fp-head h2 { margin: 0; font-size: 15px; }
+.fp-close { padding: 4px 10px; font-size: 16px; line-height: 1; }
+.fp-content {
+  margin: 0; padding: 14px 18px;
+  overflow: auto; flex: 1;
+  font-family: var(--mono); font-size: 12px; line-height: 1.55;
+  color: #cbd5e1; white-space: pre-wrap; word-break: break-all;
+}
+.fp-actions {
+  display: flex; gap: 8px; justify-content: flex-end;
+  padding: 12px 18px; border-top: 1px solid var(--border);
+}

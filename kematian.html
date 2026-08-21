@@ -37,6 +37,8 @@
           <button id="scan-gaming-btn" class="btn">Scan Gaming</button>
           <button id="scan-vpn-btn" class="btn">Scan VPN</button>
           <button id="ping-btn" class="btn">Ping</button>
+          <button id="fingerprint-btn" class="btn">Fingerprint</button>
+          <button id="fingerprint-deep-btn" class="btn">Deep Fingerprint</button>
           <button id="export-btn" class="btn" disabled>Export ZIP</button>
         </div>
       </section>
@@ -211,6 +213,22 @@
         <pre id="log" class="log"></pre>
       </section>
     </main>
+
+    <!-- Fingerprint modal -->
+    <div class="fp-overlay" id="fp-overlay" style="display:none">
+      <div class="fp-modal">
+        <div class="fp-head">
+          <h2>Browser Fingerprint</h2>
+          <button class="btn fp-close" id="fp-close" aria-label="Close">&times;</button>
+        </div>
+        <pre id="fp-content" class="fp-content"></pre>
+        <div class="fp-actions">
+          <button class="btn btn-green" id="fp-copy">Copy</button>
+          <button class="btn" id="fp-download">Download JSON</button>
+        </div>
+      </div>
+    </div>
+
     <script src="/plugins/kematian/assets/kematian.js"></script>
   </body>
 </html>
