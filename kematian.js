@@ -24,6 +24,7 @@
   const bfiltsEl     = $("bfilts");
   const cfiltsEl     = $("cfilts");
   const searchEl     = $("search");
+  const searchClear  = $("search-clear");
   const thead        = $("data-thead");
   const tbody        = $("data-tbody");
   const tableWrap    = document.querySelector(".table-wrap");
@@ -420,8 +421,10 @@
     for (let c = 0; c < need; c++) {
       let td = cells[c];
       if (!td) { td = document.createElement("td"); tr.appendChild(td); }
-      td.innerHTML = cellContent(cols[c], row, showSensitive);
-      td.onclick = cellClickHandler(cols[c], row);
+      td.innerHTML = cellContent(cols[c], row, showSensitive, searchEl.value.trim());
+      const col = cols[c];
+      td.title = (col.filedownload || col.extdownload || col.walletdownload || col.tgdownload || col.bool || col.clientbadge) ? "" : "Click to copy";
+      td.onclick = cellClickHandler(col, row);
     }
     return tr;
   }
@@ -493,6 +496,18 @@
 
   function esc(s) {
     return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+
+  // Escape text and wrap case-insensitive matches of `q` in <mark>.
+  function escHighlight(text, q) {
+    const safe = esc(text);
+    if (!q) return safe;
+    const rx = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    try {
+      return safe.replace(new RegExp("(" + rx + ")", "gi"), "<mark>$1</mark>");
+    } catch (_) {
+      return safe;
+    }
   }
 
   function chromeTs(v) {
@@ -707,7 +722,7 @@
   }
 
   // ── Cell rendering ────────────────────────────────────────────
-  function cellContent(col, row, reveal) {
+  function cellContent(col, row, reveal, hl) {
     const v = row == null ? "" : (row[col.k] == null ? "" : row[col.k]);
     if (col.clientbadge)
       return `<span class="badge badge-client" title="${esc(String(v))}">${esc(shortId(String(v)))}</span>`;
@@ -754,13 +769,13 @@
         return `<span class="bool-no">—</span>`;
       }
       return reveal
-        ? `<span class="sensitive revealed">${esc(text)}</span>`
+        ? `<span class="sensitive revealed">${escHighlight(text, hl)}</span>`
         : `<span class="sensitive">••••••••</span>`;
     }
     const text = String(v);
     if (col.truncate && text.length > 80)
-      return `<span title="${esc(text)}">${esc(text.slice(0, 80))}…</span>`;
-    return esc(text);
+      return `<span title="${esc(text)}">${escHighlight(text.slice(0, 80), hl)}…</span>`;
+    return escHighlight(text, hl);
   }
 
   function sortValue(col, row) {
@@ -992,13 +1007,15 @@
       });
       section.appendChild(header);
 
+      const scroll = document.createElement("div");
+      scroll.className = "search-group-scroll";
       const tbl = document.createElement("table");
       tbl.className = "search-group-table";
       const thRow = document.createElement("tr");
       for (const col of previewCols) {
         const th = document.createElement("th");
         th.textContent = col.h;
-        if (col.grow) th.style.width = "40%";
+        if (col.grow) th.style.width = "34%";
         thRow.appendChild(th);
       }
       tbl.appendChild(thRow);
@@ -1008,7 +1025,8 @@
         for (const col of previewCols) {
           const td = document.createElement("td");
           if (col.grow) td.className = "sg-grow";
-          td.innerHTML = cellContent(col, row, showSensitive);
+          td.innerHTML = cellContent(col, row, showSensitive, searchEl.value.trim());
+          td.title = (col.filedownload || col.extdownload || col.walletdownload || col.tgdownload || col.bool || col.clientbadge) ? "" : "Click to copy";
           td.addEventListener("click", () => {
             const val = col.sensitive ? String(row[col.k] || "")
                       : col.chromets ? chromeTs(row[col.k])
@@ -1022,7 +1040,8 @@
         }
         tbl.appendChild(tr);
       }
-      section.appendChild(tbl);
+      scroll.appendChild(tbl);
+      section.appendChild(scroll);
 
       if (g.total > g.rows.length) {
         const more = document.createElement("div");
@@ -2574,6 +2593,7 @@
   // ── Shared listeners ──────────────────────────────────────────
   searchEl.addEventListener("input", () => {
     const q = searchEl.value.trim();
+    if (searchClear) searchClear.classList.toggle("visible", !!searchEl.value);
     if (isGlobal) {
       clearTimeout(searchTimer);
       searchTimer = setTimeout(() => {
@@ -2604,6 +2624,28 @@
   revealToggle.addEventListener("change", () => {
     showSensitive = revealToggle.checked;
     renderTable();
+  });
+
+  // Clear-search button
+  if (searchClear) searchClear.addEventListener("click", () => {
+    searchEl.value = "";
+    searchClear.classList.remove("visible");
+    searchEl.dispatchEvent(new Event("input"));
+    searchEl.focus();
+  });
+
+  // Keyboard shortcuts: "/" focuses search, Esc clears it.
+  document.addEventListener("keydown", (e) => {
+    const tag = document.activeElement ? document.activeElement.tagName : "";
+    if (e.key === "/" && tag !== "INPUT" && tag !== "TEXTAREA") {
+      e.preventDefault();
+      searchEl.focus();
+      searchEl.select();
+    } else if (e.key === "Escape" && document.activeElement === searchEl && searchEl.value) {
+      searchEl.value = "";
+      searchClear.classList.remove("visible");
+      searchEl.dispatchEvent(new Event("input"));
+    }
   });
 
   if (exportTabBtn) exportTabBtn.addEventListener("click", async () => {

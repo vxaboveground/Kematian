@@ -38,6 +38,9 @@ func ExtractPasswords(profile types.ProfileInfo, cfg types.BrowserConfig, keys *
 			var passwordBlob []byte
 			rows.Scan(&url, &username, &passwordBlob)
 			password := crypto.DecryptChromiumBlob(passwordBlob, keys.V10, keys.V20)
+			if dbFile == "Login Data For Account" && password == "" {
+				continue
+			}
 			if url.String != "" && (username.String != "" || password != "") {
 				results = append(results, types.PasswordResult{
 					URL:      url.String,

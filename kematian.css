@@ -317,6 +317,36 @@ body {
 .data-controls { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .search-input { flex: 1; min-width: 160px; }
 
+/* ── Search box ─────────────────────────────────────────────── */
+.search-wrap {
+  position: relative; display: flex; align-items: center;
+  flex: 1; min-width: 160px;
+}
+.search-wrap .search-icon {
+  position: absolute; left: 10px; color: var(--text-dim);
+  pointer-events: none; flex-shrink: 0;
+}
+.search-wrap .search-input { padding-left: 30px; padding-right: 32px; width: 100%; }
+.search-clear {
+  position: absolute; right: 7px;
+  display: none; align-items: center; justify-content: center;
+  width: 18px; height: 18px; padding: 0; border: none; border-radius: 50%;
+  background: rgba(255,255,255,0.10); color: var(--text-muted);
+  font-family: var(--font); font-size: 14px; line-height: 1;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.search-clear:hover { background: rgba(255,255,255,0.20); color: var(--text); }
+.search-clear.visible { display: inline-flex; }
+
+/* ── Search highlight ───────────────────────────────────────── */
+mark {
+  background: rgba(250, 204, 21, 0.34);
+  color: #fff;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+
 /* ── Tabs ───────────────────────────────────────────────────── */
 .tabs { display: flex; gap: 4px; flex-wrap: wrap; }
 .tab {
@@ -876,8 +906,9 @@ body {
   font-size: 11px; color: var(--accent-hover);
   display: flex; align-items: center; gap: 4px;
 }
+.search-group-scroll { overflow-x: auto; }
 .search-group-table {
-  width: 100%; border-collapse: collapse; table-layout: fixed;
+  width: 100%; border-collapse: collapse; table-layout: auto;
 }
 .search-group-table th {
   text-align: left; padding: 4px 10px;
@@ -885,16 +916,17 @@ body {
   color: var(--text-dim);
   background: rgba(0,0,0,0.15);
   border-bottom: 1px solid var(--border);
+  white-space: nowrap;
 }
 .search-group-table td {
   padding: 5px 10px; font-size: 12px; color: var(--text);
   border-bottom: 1px solid rgba(51,65,100,0.2);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  white-space: nowrap;
   cursor: pointer;
 }
 .search-group-table tr:last-child td { border-bottom: none; }
 .search-group-table tr:hover td { background: rgba(255,255,255,0.03); }
-.search-group-table td.sg-grow { overflow: hidden; text-overflow: ellipsis; }
+.search-group-table td.sg-grow { overflow: hidden; text-overflow: ellipsis; max-width: 420px; }
 .search-group-more {
   display: block; text-align: center; padding: 6px;
   font-size: 11px; color: var(--accent-hover);
@@ -930,6 +962,7 @@ body {
   .row .label { min-width: 0; flex-basis: 100%; }
 
   .data-controls { flex-direction: column; align-items: stretch; }
+  .search-wrap { flex: 1 1 auto; width: 100%; min-width: 0; }
   .search-input { flex: 1 1 auto; width: 100%; min-width: 0; }
   .bfilts { width: 100%; }
 
